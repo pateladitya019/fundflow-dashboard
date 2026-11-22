@@ -1,0 +1,48 @@
+name: NSE cloud test
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q requests
+      - name: Can GitHub's servers download NSE data?
+        shell: python
+        run: |
+          import requests, time, io, zipfile
+          from datetime import date, timedelta
+          H = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+               "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9", "Referer": "https://www.nseindia.com/"}
+          s = requests.Session(); s.headers.update(H)
+          d = date.today() - timedelta(days=1)
+          while d.weekday() > 4:
+              d -= timedelta(days=1)
+          dm, ymd = d.strftime("%d%m%Y"), d.strftime("%Y%m%d")
+          checks = [
+            ("Home page (cookies)",       "https://www.nseindia.com/", "daily"),
+            ("Price + delivery file",     f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{dm}.csv", "daily"),
+            ("Participant-wise OI",       f"https://nsearchives.nseindia.com/content/nsccl/fao_participant_oi_{dm}.csv", "daily"),
+            ("F&O bhavcopy (options)",    f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{ymd}_F_0000.csv.zip", "daily"),
+            ("Index closes",              f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{dm}.csv", "daily"),
+            ("Nifty 500 list",            "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv", "daily"),
+            ("Bulk deals",                "https://nsearchives.nseindia.com/content/equities/bulk.csv", "daily"),
+            ("FII/DII (API)",             "https://www.nseindia.com/api/fiidiiTradeReact", "daily"),
+            ("NSDL FPI site",             "https://www.fpi.nsdl.co.in/web/Reports/Archive.aspx", "fortnightly"),
+            ("Live quotes (API)",         "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20500", "live only"),
+          ]
+          print(f"Testing files for {d}  (a 404 on a holiday is normal)\n")
+          ok = 0
+          for name, url, use in checks:
+              try:
+                  r = s.get(url, timeout=30)
+                  good = r.status_code == 200 and len(r.content) > 200
+                  ok += good and use != "live only"
+                  print(f"{'OK  ' if good else 'FAIL'}  {r.status_code}  {len(r.content):>10,} bytes  {name:<26} ({use})")
+              except Exception as e:
+                  print(f"FAIL  ---  {type(e).__name__:<17} {name:<26} ({use})")
+              time.sleep(1)
+          need = len([c for c in checks if c[2] != "live only"])
+          print(f"\nRESULT: {ok} of {need} daily files reachable from GitHub's cloud.")
+          print("Cloud version will work." if ok >= need - 1 else "NSE is blocking GitHub's servers: keep using the laptop.")
